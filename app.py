@@ -13,6 +13,8 @@ Env vars:
 import asyncio
 import html
 import io
+import json
+import urllib.parse
 import os
 import subprocess
 import tempfile
@@ -154,8 +156,21 @@ async def resolve(peer, username):
 
 
 async def send_voice(req):
-    data = await req.json() if req.content_type == "application/json" else dict(await req.post())
+    raw = await req.read()
+    data = {}
+    if raw:
+        text = raw.decode("utf-8", errors="ignore").strip()
+        try:
+            data = json.loads(text)
+            if isinstance(data, str):  # JSON sent as a JSON string
+                data = json.loads(data)
+        except ValueError:
+            data = dict(urllib.parse.parse_qsl(text))
+    if not isinstance(data, dict):
+        data = {}
     data = {**dict(req.query), **data}
+    print("send_voice:", req.method, req.content_type, "fields:", sorted(data.keys()),
+          "key_ok:", bool(SECRET) and data.get("key") == SECRET, flush=True)
     check_key(data.get("key"))
     url = data.get("url")
     peer, username = data.get("peer"), data.get("username")
@@ -170,8 +185,10 @@ async def send_voice(req):
         f = io.BytesIO(audio)
         f.name = "voice.ogg"
         msg = await client.send_file(entity, f, voice_note=True)
+        print("send_voice: sent message", msg.id, "to", peer or username, flush=True)
         return web.json_response({"ok": True, "message_id": msg.id})
     except Exception as e:  # noqa: BLE001 - report any failure back to Salebot
+        print("send_voice: error", type(e).__name__, e, flush=True)
         return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
 
 
